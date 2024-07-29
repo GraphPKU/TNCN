@@ -61,6 +61,7 @@ def get_args():
         '--NCN_mode', type=int, help='NCN hop kind, 0 for 0&1 hop, 1 for 1 hop, 2 for 0~2 hop', default=1
         )
     parser.add_argument('--per_val_epoch', type=int, help='val per k epoch', default=1)
+    parser.add_argument('--patch_num', type=int, help='patch number', default=1)
 
     try:
         args = parser.parse_args()

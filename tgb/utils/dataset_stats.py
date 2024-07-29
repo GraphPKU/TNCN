@@ -6,10 +6,6 @@ import numpy as np
 import pandas as pd
 import networkx as nx
 import argparse
-
-from torch_geometric.loader import TemporalDataLoader
-from tgb.nodeproppred.dataset_pyg import PyGNodePropPredDataset
-# from tgb.linkproppred.dataset_pyg import PyGLinkPropPredDataset
 from tgb.linkproppred.dataset import LinkPropPredDataset
 
 

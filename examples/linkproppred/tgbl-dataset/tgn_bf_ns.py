@@ -131,7 +131,7 @@ def test(loader, neg_sampler: RandEdgeSampler, split_mode):
     Returns:
         perf_metric: the result of the performance evaluaiton
     """
-    model['memory'].eval()
+    model['memory'].eval(split_mode)
     model['gnn'].eval()
     model['link_pred'].eval()
 

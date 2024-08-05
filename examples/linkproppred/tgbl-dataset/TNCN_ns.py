@@ -54,98 +54,126 @@ def train():
     neighbor_loader.reset_state()  # Start with an empty graph.
 
     total_loss = 0
+    # clear the upd_time_table
+    upd_time_table.zero_()
 
     for batch in tqdm(train_loader):
         batch = batch.to(device)
         optimizer.zero_grad()
 
-        src, pos_dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
+        bsrc, bpos_dst, bt, bmsg = batch.src, batch.dst, batch.t, batch.msg
 
         # Sample negative destination nodes.
-        neg_dst = torch.randint(
+        bneg_dst = torch.randint(
             min_dst_idx,
             max_dst_idx + 1,
-            (src.size(0),),
+            (bsrc.size(0),),
             dtype=torch.long,
             device=device,
         )
 
-        n_id = torch.cat([src, pos_dst, neg_dst]).unique()
-        # n_id, edge_index, e_id = neighbor_loader(n_id)
-        n_id, edge_index, e_id = find_neighbor(neighbor_loader, n_id, HOP_NUM)
-        assoc[n_id] = torch.arange(n_id.size(0), device=device)
+        bn_id = torch.cat([bsrc, bpos_dst, bneg_dst]).unique()
+        bz, blast_update = model['memory'](bn_id)
+        assert blast_update.allclose(upd_time_table[bn_id])
 
-        id_num = n_id.size(0)
+        loss = 0.0
 
-        # Get updated memory of all nodes involved in the computation.
-        z, last_update = model['memory'](n_id)
+        patch_size = math.ceil(bsrc.size(0) / K_PATCH)
+        for k in range(K_PATCH):
+            start_idx = k * patch_size
+            end_idx = min((k + 1) * patch_size, bsrc.size(0))
+            exact_patch_size = end_idx - start_idx
+            if exact_patch_size <= 0:
+                break
 
-        z = model['gnn'](
-            z,
-            last_update,
-            edge_index,
-            data.t[e_id].to(device),
-            data.msg[e_id].to(device),
-        )
-        
-        ################################################################
-        
-        src_re = assoc[src]
-        pos_re = assoc[pos_dst]
-        neg_re = assoc[neg_dst]
+            src, pos_dst, t, msg, neg_dst = (
+                bsrc[start_idx:end_idx],
+                bpos_dst[start_idx:end_idx],
+                bt[start_idx:end_idx],
+                bmsg[start_idx:end_idx],
+                bneg_dst[start_idx:end_idx],
+            )
+            n_id = torch.cat([src, pos_dst, neg_dst]).unique()
+            # n_id, edge_index, e_id = neighbor_loader(n_id)
+            n_id, edge_index, e_id = find_neighbor(neighbor_loader, n_id, HOP_NUM)
+            assoc[n_id] = torch.arange(n_id.size(0), device=device)
 
-        def generate_adj_1_hop():
-            loop_edge = torch.arange(id_num, dtype=torch.int64, device=device)
-            mask = ~ torch.isin(loop_edge, edge_index)
-            loop_edge = loop_edge[mask]
-            loop_edge = torch.stack([loop_edge,loop_edge])
-            if edge_index.size(1) == 0:
-                adj = SparseTensor.from_edge_index(loop_edge).to_device(device)
-            else:
-                adj = SparseTensor.from_edge_index(torch.cat((loop_edge, edge_index, torch.stack([edge_index[1], edge_index[0]])),dim=-1)).to_device(device)
-                # adj = SparseTensor.from_edge_index(edge_index).to_device(device)
-            return adj
-        
-        def generate_adj_0_1_hop():
-            loop_edge = torch.arange(id_num, dtype=torch.int64, device=device)
-            loop_edge = torch.stack([loop_edge,loop_edge])
-            if edge_index.size(1) == 0:
-                adj = SparseTensor.from_edge_index(loop_edge).to_device(device)
-            else:
-                adj = SparseTensor.from_edge_index(torch.cat((loop_edge, edge_index, torch.stack([edge_index[1], edge_index[0]])),dim=-1)).to_device(device)
-            return adj
-        
-        def generate_adj_0_1_2_hop(adj):
-            # adj = SparseTensor.to_dense(adj)
-            # adj = torch.mm(adj, adj)
-            # adj = SparseTensor.from_dense(adj)
-            adj = adj.matmul(adj)
-            return adj
+            id_num = n_id.size(0)
 
-        if NCN_MODE == 0:
-            adj_0_1 = generate_adj_0_1_hop()
-            adj_1 = generate_adj_1_hop()
-            adjs = (adj_0_1, adj_1)
-        elif NCN_MODE == 1:
-            adj_1 = generate_adj_1_hop()
-            adjs = (adj_1)
-        elif NCN_MODE == 2:
-            adj_0_1 = generate_adj_0_1_hop()
-            adj_1 = generate_adj_1_hop()
-            adj_0_1_2 = generate_adj_0_1_2_hop(adj_1)
-            adjs = (adj_0_1, adj_1, adj_0_1_2)
-        else: 
-            raise ValueError('Invalid NCN Mode! Mode must be 0, 1, or 2.')
+            # Get updated memory of all nodes involved in the computation.
+            z, last_update = model['memory'](n_id)
 
-        pos_out = model['link_pred'](z, adjs, torch.stack([src_re,pos_re]), NCN_MODE)
-        neg_out = model['link_pred'](z, adjs, torch.stack([src_re,neg_re]), NCN_MODE)
-        loss = criterion(pos_out, torch.ones_like(pos_out))
-        loss += criterion(neg_out, torch.zeros_like(neg_out))
+            z = model['gnn'](
+                z,
+                last_update,
+                edge_index,
+                data.t[e_id].to(device),
+                data.msg[e_id].to(device),
+            )
+            
+            ################################################################
+            
+            src_re = assoc[src]
+            pos_re = assoc[pos_dst]
+            neg_re = assoc[neg_dst]
+
+            def generate_adj_1_hop():
+                loop_edge = torch.arange(id_num, dtype=torch.int64, device=device)
+                mask = ~ torch.isin(loop_edge, edge_index)
+                loop_edge = loop_edge[mask]
+                loop_edge = torch.stack([loop_edge,loop_edge])
+                if edge_index.size(1) == 0:
+                    adj = SparseTensor.from_edge_index(loop_edge).to_device(device)
+                else:
+                    adj = SparseTensor.from_edge_index(torch.cat((loop_edge, edge_index, torch.stack([edge_index[1], edge_index[0]])),dim=-1)).to_device(device)
+                    # adj = SparseTensor.from_edge_index(edge_index).to_device(device)
+                return adj
+            
+            def generate_adj_0_1_hop():
+                loop_edge = torch.arange(id_num, dtype=torch.int64, device=device)
+                loop_edge = torch.stack([loop_edge,loop_edge])
+                if edge_index.size(1) == 0:
+                    adj = SparseTensor.from_edge_index(loop_edge).to_device(device)
+                else:
+                    adj = SparseTensor.from_edge_index(torch.cat((loop_edge, edge_index, torch.stack([edge_index[1], edge_index[0]])),dim=-1)).to_device(device)
+                return adj
+            
+            def generate_adj_0_1_2_hop(adj):
+                # adj = SparseTensor.to_dense(adj)
+                # adj = torch.mm(adj, adj)
+                # adj = SparseTensor.from_dense(adj)
+                adj = adj.matmul(adj)
+                return adj
+
+            if NCN_MODE == 0:
+                adj_0_1 = generate_adj_0_1_hop()
+                adj_1 = generate_adj_1_hop()
+                adjs = (adj_0_1, adj_1)
+            elif NCN_MODE == 1:
+                adj_1 = generate_adj_1_hop()
+                adjs = (adj_1)
+            elif NCN_MODE == 2:
+                adj_0_1 = generate_adj_0_1_hop()
+                adj_1 = generate_adj_1_hop()
+                adj_0_1_2 = generate_adj_0_1_2_hop(adj_1)
+                adjs = (adj_0_1, adj_1, adj_0_1_2)
+            else: 
+                raise ValueError('Invalid NCN Mode! Mode must be 0, 1, or 2.')
+
+            pos_out = model['link_pred'](z, adjs, torch.stack([src_re,pos_re]), NCN_MODE)
+            neg_out = model['link_pred'](z, adjs, torch.stack([src_re,neg_re]), NCN_MODE)
+            loss += criterion(pos_out, torch.ones_like(pos_out)) * exact_patch_size
+            loss += criterion(neg_out, torch.zeros_like(neg_out)) * exact_patch_size
+
+            neighbor_loader.insert(src, pos_dst)
+            for s, d, t in zip(src, pos_dst, t):
+                upd_time_table[s] = t
+                upd_time_table[d] = t
 
         # Update memory and neighbor loader with ground-truth state.
-        model['memory'].update_state(src, pos_dst, t, msg)
-        neighbor_loader.insert(src, pos_dst)
+        model['memory'].update_state(bsrc, bpos_dst, bt, bmsg)
 
+        loss /= batch.num_events
         loss.backward()
         optimizer.step()
         model['memory'].detach()
@@ -180,7 +208,11 @@ def test(loader, neg_sampler, split_mode):
             pos_batch.t,
             pos_batch.msg,
         )
-        
+
+        bn_id = torch.cat([pos_src, pos_dst]).unique()
+        bz, blast_update = model['memory'](bn_id)
+        assert blast_update.allclose(upd_time_table[bn_id])
+
         #########################
         neg_batch_list = neg_sampler.query_batch(pos_src, pos_dst, pos_t, split_mode=split_mode)
 
@@ -264,9 +296,13 @@ def test(loader, neg_sampler, split_mode):
             perf = evaluator.eval(input_dict)[metric]
             perf_list.append(perf)
 
+            neighbor_loader.insert(src[0:1], dst[0:1])
+            upd_time_table[src[0:1]] = pos_t[idx]
+            upd_time_table[dst[0:1]] = pos_t[idx]
+
         # Update memory and neighbor loader with ground-truth state.
         model['memory'].update_state(pos_src, pos_dst, pos_t, pos_msg)
-        neighbor_loader.insert(pos_src, pos_dst)
+        # neighbor_loader.insert(pos_src, pos_dst)
 
     perf_tensor = torch.tensor(perf_list)
     transductive_perf = perf_tensor[transductive_mask[split_mode]]
@@ -314,6 +350,7 @@ NCN_MODE = args.NCN_mode
 PER_VAL_EPOCH = args.per_val_epoch
 device = args.device
 
+K_PATCH = args.patch_num
 
 MODEL_NAME = 'TNCN'
 # ==========
@@ -332,12 +369,12 @@ val_data = data[val_mask]
 test_data = data[test_mask]
 observed_nodes = torch.cat([train_data.src, train_data.dst]).unique()
 transductive_mask = {
-    "val": torch.isin(val_data.src, observed_nodes).cpu().numpy(),
-    "test": torch.isin(test_data.src, observed_nodes).cpu().numpy(),
+    "val": (torch.isin(val_data.src, observed_nodes) & torch.isin(val_data.dst, observed_nodes)).cpu().numpy(),
+    "test": (torch.isin(test_data.src, observed_nodes) & torch.isin(test_data.dst, observed_nodes)).cpu().numpy(),
 }
 inductive_mask = {
-    "val": ~ transductive_mask["val"],
-    "test": ~ transductive_mask["test"],
+    "val": ~ (torch.isin(val_data.src, observed_nodes) & torch.isin(val_data.dst, observed_nodes)).cpu().numpy(),
+    "test": ~ (torch.isin(test_data.src, observed_nodes) & torch.isin(test_data.dst, observed_nodes)).cpu().numpy(),
 }
 
 train_loader = TemporalDataLoader(train_data, batch_size=BATCH_SIZE)
@@ -428,6 +465,7 @@ criterion = torch.nn.BCEWithLogitsLoss()
 
 # Helper vector to map global node indices to local ones.
 assoc = torch.empty(data.num_nodes, dtype=torch.long, device=device)
+upd_time_table = torch.zeros(data.num_nodes, dtype=torch.long, device=device)
 
 print("==========================================================")
 print(f"=================*** {MODEL_NAME}: LinkPropPred: {DATA} ***=============")
@@ -442,7 +480,7 @@ if not osp.exists(results_path):
     os.mkdir(results_path)
     print('INFO: Create directory {}'.format(results_path))
 Path(results_path).mkdir(parents=True, exist_ok=True)
-results_filename = f'{results_path}/{MODEL_NAME}_{DATA}_{NCN_MODE}_{args.msg_func}_{args.emb_func}_{args.agg_func}_{args.nei_sampler}_results.json'
+results_filename = f'{results_path}/{MODEL_NAME}_{DATA}_{NCN_MODE}_{args.msg_func}_{args.emb_func}_{args.agg_func}_{args.nei_sampler}_{args.patch_num}_results.json'
 
 for run_idx in range(NUM_RUNS):
     print('-------------------------------------------------------------------------------')
@@ -455,7 +493,7 @@ for run_idx in range(NUM_RUNS):
 
     # define an early stopper
     save_model_dir = f'{osp.dirname(osp.abspath(__file__))}/saved_models/'
-    save_model_id = f'{MODEL_NAME}_{DATA}_{SEED}_{run_idx}_NCN_{NCN_MODE}_{args.msg_func}_{args.emb_func}_{args.agg_func}_{args.nei_sampler}'
+    save_model_id = f'{MODEL_NAME}_{DATA}_{SEED}_{run_idx}_NCN_{NCN_MODE}_{args.msg_func}_{args.emb_func}_{args.agg_func}_{args.nei_sampler}_{args.patch_num}'
     early_stopper = EarlyStopMonitor(save_model_dir=save_model_dir, save_model_id=save_model_id, 
                                     tolerance=TOLERANCE, patience=PATIENCE)
 
@@ -513,6 +551,7 @@ for run_idx in range(NUM_RUNS):
                   'emb_func': args.emb_func,
                   'agg_func': args.agg_func,
                   'nei_sampler': args.nei_sampler,
+                  'patch_num': args.patch_num,
                   f'val {metric}': val_perf_list,
                   f'test {metric}': perf_metric_test,
                   'test_time': test_time,

@@ -1,6 +1,7 @@
 import math
 import timeit
 from tqdm import tqdm
+from copy import deepcopy
 
 import os
 import os.path as osp
@@ -168,8 +169,6 @@ def train():
             for s, d, t in zip(src, pos_dst, t):
                 upd_time_table[s] = t
                 upd_time_table[d] = t
-            # upd_time_table[src] = t
-            # upd_time_table[pos_dst] = t
 
         # Update memory and neighbor loader with ground-truth state.
         model['memory'].update_state(bsrc, bpos_dst, bt, bmsg)
@@ -196,7 +195,7 @@ def test(loader, neg_sampler: RandEdgeSampler, split_mode):
     Returns:
         perf_metric: the result of the performance evaluaiton
     """
-    model['memory'].eval()
+    model['memory'].eval(split_mode)
     model['gnn'].eval()
     model['link_pred'].eval()
 
@@ -204,9 +203,7 @@ def test(loader, neg_sampler: RandEdgeSampler, split_mode):
     bpred_score = []
     btrue_label = []
 
-    idx = 0
     for pos_batch in tqdm(loader):
-        idx += 1
 
         bpos_src, bpos_dst, bpos_t, bpos_msg = (
             pos_batch.src,
@@ -384,7 +381,7 @@ NCN_MODE = args.NCN_mode
 PER_VAL_EPOCH = args.per_val_epoch
 
 K_PATCH = args.patch_num
-
+inductive = True
 
 MODEL_NAME = 'TNCN'
 # ==========
@@ -489,6 +486,12 @@ for run_idx in range(NUM_RUNS):
         "ap": [],
         "auc": []
     }
+    nn_val_perf_list = {
+        "acc": [],
+        "ap": [],
+        "auc": []
+    }
+
     start_train_val = timeit.default_timer()
     for epoch in range(1, NUM_EPOCH + 1):
         # training
@@ -502,12 +505,26 @@ for run_idx in range(NUM_RUNS):
         if epoch % PER_VAL_EPOCH == 0:
             start_val = timeit.default_timer()
             # perf_metric_val = test(val_loader, neg_sampler, split_mode="val")
+            
+            if inductive:
+                train_mem_backup = model["memory"].backup_memory()
+                neighbor_loader_backup = deepcopy(neighbor_loader)
+                upd_time_table_backup = upd_time_table.clone()
+                nn_perf_metric_val = test(new_val_loader, val_neg_sampler, split_mode="val")
+                model["memory"].restore_memory(train_mem_backup)
+                neighbor_loader = deepcopy(neighbor_loader_backup)
+                upd_time_table = upd_time_table_backup.clone()            
+
             perf_metric_val = test(val_loader, val_neg_sampler, split_mode="val")
-            print(f"\tValidation results: {perf_metric_val}")
+            print(f"\tTransductive Validation results: {perf_metric_val}")
+            print(f"\tInductive Validation results: {nn_perf_metric_val}")
             print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
             val_perf_list["acc"].append(perf_metric_val["acc"])
             val_perf_list["ap"].append(perf_metric_val["ap"])
             val_perf_list["auc"].append(perf_metric_val["auc"])
+            nn_val_perf_list["acc"].append(nn_perf_metric_val["acc"])
+            nn_val_perf_list["ap"].append(nn_perf_metric_val["ap"])
+            nn_val_perf_list["auc"].append(nn_perf_metric_val["auc"])
 
             # check for early stopping
             if early_stopper.step_check(perf_metric_val["ap"], model):
@@ -525,11 +542,23 @@ for run_idx in range(NUM_RUNS):
 
     # final testing
     start_test = timeit.default_timer()
+
+    if inductive:
+        val_mem_backup = model["memory"].backup_memory()
+        neighbor_loader_backup = deepcopy(neighbor_loader)
+        upd_time_table_backup = upd_time_table.clone()
+        nn_perf_metric_test = test(new_test_loader, test_neg_sampler, split_mode="test")
+        model["memory"].restore_memory(val_mem_backup)
+        neighbor_loader = deepcopy(neighbor_loader_backup)
+        upd_time_table = upd_time_table_backup.clone()
+
     # perf_metric_test = test(test_loader, neg_sampler, split_mode="test")
     perf_metric_test = test(test_loader, test_neg_sampler, split_mode="test")
 
-    print(f"INFO: Test: Evaluation Setting: >>> ONE-VS-MANY <<< ")
+    print(f"INFO: Test: Evaluation Setting: >>> Transductive <<< ")
     print(f"\tTest results: {perf_metric_test}")
+    print(f"INFO: Test: Evaluation Setting: >>> Inductive <<< ")
+    print(f"\tTest results: {nn_perf_metric_test}")
     test_time = timeit.default_timer() - start_test
     print(f"\tTest: Elapsed Time (s): {test_time: .4f}")
 
@@ -538,7 +567,8 @@ for run_idx in range(NUM_RUNS):
                   'run': run_idx,
                   'seed': SEED,
                   f'val_perf': val_perf_list,
-                  f'test_perf': perf_metric_test,
+                  f'test_perf': {"Transductive": perf_metric_test, 
+                                 "Inductive": nn_perf_metric_test},
                   'test_time': test_time,
                   'tot_train_val_time': train_val_time
                   }, 

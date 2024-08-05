@@ -6,7 +6,7 @@ from typing import Any
 import sys
 import argparse
 import json
-import io
+import torch
 
 
 # import torch
@@ -42,7 +42,7 @@ def find_nearest(array, value):
 
 
 def get_args():
-    parser = argparse.ArgumentParser('*** TGB ***')
+    parser = argparse.ArgumentParser('*** TNCN ***')
     parser.add_argument('-d', '--data', type=str, help='Dataset name', default='tgbl-wiki')
     parser.add_argument('--lr', type=float, help='Learning rate', default=1e-4)
     parser.add_argument('--bs', type=int, help='Batch size', default=200)
@@ -56,12 +56,17 @@ def get_args():
     parser.add_argument('--patience', type=float, help='Early stopper patience', default=0)
     parser.add_argument('--num_run', type=int, help='Number of iteration runs', default=1)
     parser.add_argument('--num_neighbors', type=int, help='Number of stored recent neighbors', default=10)
+    parser.add_argument('--nei_sampler', type=str, help='Neighbor sampler, r for random, fr for fast random with bias, l for last', default='l')
     parser.add_argument('--hop_num', type=int, help='hop number of neighbors', default=1)
     parser.add_argument(
         '--NCN_mode', type=int, help='NCN hop kind, 0 for 0&1 hop, 1 for 1 hop, 2 for 0~2 hop', default=1
         )
     parser.add_argument('--per_val_epoch', type=int, help='val per k epoch', default=1)
     parser.add_argument('--patch_num', type=int, help='patch number', default=1)
+    parser.add_argument('--msg_func', type=str, help='message function', default='identity')
+    parser.add_argument('--emb_func', type=str, help='embedding function', default='GraphAttention')
+    parser.add_argument('--agg_func', type=str, help='aggregator', default='last')
+    parser.add_argument('--device', type=str, help='device', default=torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
 
     try:
         args = parser.parse_args()

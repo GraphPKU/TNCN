@@ -8,6 +8,7 @@ Reference:
 
 import copy
 from typing import Callable, Dict, Tuple
+from collections import defaultdict
 
 import torch
 from torch import Tensor
@@ -213,6 +214,34 @@ class TGNMemory(torch.nn.Module):
             self._update_memory(torch.arange(self.num_nodes, device=self.memory.device))
             self._reset_message_store()
         super().train(mode)
+
+    def eval(self, mode: str = "val"):
+        """Sets the module in evaluation mode."""
+        if not self.training and mode == "val":
+            # Flush message store to memory in case we were from eval mode with outdated memory.
+            self._update_memory(torch.arange(self.num_nodes, device=self.memory.device))
+            self._reset_message_store()
+        super().eval()
+
+    def backup_memory(self):
+        msg_s_clone, msg_d_clone = {}, {}
+        for k, v in self.msg_s_store.items():
+            msg_s_clone[k] = (v[0].clone(), v[1].clone(), v[2].clone(), v[3].clone())
+        for k, v in self.msg_d_store.items():
+            msg_d_clone[k] = (v[0].clone(), v[1].clone(), v[2].clone(), v[3].clone())
+        return self.memory.clone(), self.last_update.clone(), msg_s_clone, msg_d_clone
+    
+    def restore_memory(self, memory_backup):
+        memory, last_update, msg_s_store, msg_d_store = memory_backup
+        self.memory = memory.clone()
+        self.last_update = last_update.clone()
+        # # self.msg_s_store = defaultdict(lambda: (torch.empty(0, dtype=torch.long), torch.empty(0, dtype=torch.long), torch.empty(0, dtype=torch.long), torch.empty(0, self.raw_msg_dim)))
+        # # self.msg_d_store = defaultdict(lambda: (torch.empty(0, dtype=torch.long), torch.empty(0, dtype=torch.long), torch.empty(0, dtype=torch.long), torch.empty(0, self.raw_msg_dim)))
+        # self._reset_message_store()
+        for k, v in msg_s_store.items():
+            self.msg_s_store[k] = (v[0].clone(), v[1].clone(), v[2].clone(), v[3].clone())
+        for k, v in msg_d_store.items():
+            self.msg_d_store[k] = (v[0].clone(), v[1].clone(), v[2].clone(), v[3].clone())
 
 
 class DyRepMemory(torch.nn.Module):

@@ -24,12 +24,12 @@ class NCNPredictor(torch.nn.Module):
         # self.register_parameter("beta", nn.Parameter(beta*torch.ones((1))))
         # self.dropadj = DropAdj(edrop)
 
-        self.xlin = nn.Linear(hidden_channels, hidden_channels)
-        self.xcnlin = nn.Linear(in_channels, hidden_channels)
-        self.xijlini = nn.Linear(in_channels, hidden_channels)
-        self.xijlinj = nn.Linear(in_channels, hidden_channels)
-        self.xijfinal = nn.Linear(in_channels, hidden_channels)
-        self.lin = nn.Linear(hidden_channels, hidden_channels)
+        # self.xlin = nn.Linear(hidden_channels, hidden_channels)
+        # self.xcnlin = nn.Linear(in_channels, hidden_channels)
+        # self.xijlini = nn.Linear(in_channels, hidden_channels)
+        # self.xijlinj = nn.Linear(in_channels, hidden_channels)
+        # self.xijfinal = nn.Linear(in_channels, hidden_channels)
+        # self.lin = nn.Linear(hidden_channels, hidden_channels)
         
         if NCN_mode == 0:
             k = 3

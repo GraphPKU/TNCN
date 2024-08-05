@@ -83,3 +83,73 @@ class LastNeighborLoader:
     def reset_state(self):
         self.cur_e_id = 0
         self.e_id.fill_(-1)
+
+class RandomNeighborLoader:
+    def __init__(self, num_nodes: int, size: int, device=None):
+        self.size = size
+        self.src = torch.ones((0,), dtype=torch.long, device=device)
+        self.dst = torch.ones((0,), dtype=torch.long, device=device)
+        self.e_id = torch.ones((0,), dtype=torch.long, device=device)
+        self.device = device
+        self._assoc = torch.empty(num_nodes, dtype=torch.long, device=device)
+
+    def __call__(self, n_id: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+        e_ids = []
+        for idx in n_id.unique():
+            mask = torch.logical_or(self.src == idx, self.dst == idx)
+            e_id = self.e_id[mask]
+            # randomly sample size neighbors
+            e_id = e_id[torch.randperm(e_id.size(0))[:self.size]]
+            e_ids.append(e_id)
+        e_ids = torch.cat(e_ids)
+        src = self.src[e_ids - 1]
+        dst = self.dst[e_ids - 1]
+        n_ids = torch.cat([n_id, src, dst]).unique()
+        # reindex
+        self._assoc[n_ids] = torch.arange(n_ids.size(0), device=n_ids.device)
+        src, dst = self._assoc[src], self._assoc[dst]
+
+        return n_ids, torch.stack([src, dst]), e_ids
+        
+    def insert(self, src: Tensor, dst: Tensor):
+        self.src = torch.cat([self.src, src])
+        self.dst = torch.cat([self.dst, dst])
+        self.e_id = torch.cat([self.e_id, torch.arange(self.e_id.size(0) + 1, self.e_id.size(0) + 1 + src.size(0), dtype=torch.long, device=src.device)])
+
+    def reset_state(self):
+        self.src = torch.ones((0,), dtype=torch.long, device=self.device)
+        self.dst = torch.ones((0,), dtype=torch.long, device=self.device)
+        self.e_id = torch.ones((0,), dtype=torch.long, device=self.device)
+
+class FastBiasRandomNeighborLoader:
+    def __init__(self, num_nodes: int, size: int, device=None):
+        self.size = size
+        self.src = torch.ones((0,), dtype=torch.long, device=device)
+        self.dst = torch.ones((0,), dtype=torch.long, device=device)
+        self.e_id = torch.ones((0,), dtype=torch.long, device=device)
+        self.device = device
+        self._assoc = torch.empty(num_nodes, dtype=torch.long, device=device)
+
+    def __call__(self, n_id: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+        mask = torch.logical_or(torch.isin(self.src, n_id), torch.isin(self.dst, n_id))
+        e_id = self.e_id[mask]
+        # randomly sample size neighbors
+        e_id = e_id[torch.randperm(e_id.size(0))[:self.size * n_id.unique().size(0)]] # sample size * num_nodes neighbors
+        src = self.src[e_id - 1]
+        dst = self.dst[e_id - 1]
+        n_id = torch.cat([n_id, src, dst]).unique()
+        # reindex
+        self._assoc[n_id] = torch.arange(n_id.size(0), device=self.device)
+        src, dst = self._assoc[src], self._assoc[dst]
+
+        return n_id, torch.stack([src, dst]), e_id
+        
+    def insert(self, src: Tensor, dst: Tensor):
+        self.src = torch.cat([self.src, src])
+        self.dst = torch.cat([self.dst, dst])
+        self.e_id = torch.cat([self.e_id, torch.arange(self.e_id.size(0) + 1, self.e_id.size(0) + 1 + src.size(0), dtype=torch.long, device=src.device)])
+
+    def reset_state(self):
+        self.src = torch.ones((0,), dtype=torch.long, device=self.device)
+        self.dst = torch.ones((0,), dtype=torch.long, device=self.device)
+        self.e_id = torch.ones((0,), dtype=torch.long, device=self.device)

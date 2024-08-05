@@ -30,7 +30,8 @@ class GraphAttentionEmbedding(torch.nn.Module):
 
 
 class TimeEmbedding(torch.nn.Module):
-    def __init__(self, in_channels, out_channels):
+    # TODO: fix the time encoding
+    def __init__(self, in_channels, out_channels, msg_dim, time_enc):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -45,8 +46,16 @@ class TimeEmbedding(torch.nn.Module):
 
         self.embedding_layer = NormalLinear(1, self.out_channels)
 
-    def forward(self, x, last_update, t):
+    def forward(self, x, last_update, edge_index, t, msg):
         rel_t = last_update - t
+        print(rel_t.shape, x.shape)
         embeddings = x * (1 + self.embedding_layer(rel_t.to(x.dtype).unsqueeze(1)))
 
         return embeddings
+    
+class IdentityEmbedding(torch.nn.Module):
+    def __init__(self, in_channels, out_channels, msg_dim, time_enc):
+        super().__init__()
+
+    def forward(self, x, last_update, edge_index, t, msg):
+        return x

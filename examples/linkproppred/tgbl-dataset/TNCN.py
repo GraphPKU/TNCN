@@ -442,7 +442,7 @@ if not osp.exists(results_path):
     os.mkdir(results_path)
     print('INFO: Create directory {}'.format(results_path))
 Path(results_path).mkdir(parents=True, exist_ok=True)
-results_filename = f'{results_path}/{MODEL_NAME}_{DATA}_{NCN_MODE}_{args.msg_func}_{args.emb_func}_{args.agg_func}_{args.nei_sampler}_results.json'
+results_filename = f'{results_path}/{MODEL_NAME}_{DATA}_{NCN_MODE}_{args.msg_func}_{args.emb_func}_{args.agg_func}_{args.nei_sampler}_{NUM_NEIGHBORS}_results.json'
 
 for run_idx in range(NUM_RUNS):
     print('-------------------------------------------------------------------------------')
@@ -455,7 +455,7 @@ for run_idx in range(NUM_RUNS):
 
     # define an early stopper
     save_model_dir = f'{osp.dirname(osp.abspath(__file__))}/saved_models/'
-    save_model_id = f'{MODEL_NAME}_{DATA}_{SEED}_{run_idx}_NCN_{NCN_MODE}_{args.msg_func}_{args.emb_func}_{args.agg_func}_{args.nei_sampler}'
+    save_model_id = f'{MODEL_NAME}_{DATA}_{SEED}_{run_idx}_NCN_{NCN_MODE}_{args.msg_func}_{args.emb_func}_{args.agg_func}_{args.nei_sampler}_{NUM_NEIGHBORS}'
     early_stopper = EarlyStopMonitor(save_model_dir=save_model_dir, save_model_id=save_model_id, 
                                     tolerance=TOLERANCE, patience=PATIENCE)
 
@@ -513,6 +513,7 @@ for run_idx in range(NUM_RUNS):
                   'emb_func': args.emb_func,
                   'agg_func': args.agg_func,
                   'nei_sampler': args.nei_sampler,
+                  'num_neighbors': NUM_NEIGHBORS,
                   f'val {metric}': val_perf_list,
                   f'test {metric}': perf_metric_test,
                   'test_time': test_time,

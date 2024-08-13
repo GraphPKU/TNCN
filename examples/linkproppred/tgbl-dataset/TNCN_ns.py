@@ -502,6 +502,8 @@ for run_idx in range(NUM_RUNS):
     dataset.load_val_ns()
 
     val_perf_list = []
+    trans_val_list = []
+    ind_val_list = []
     start_train_val = timeit.default_timer()
     for epoch in range(1, NUM_EPOCH + 1):
         # training
@@ -518,6 +520,8 @@ for run_idx in range(NUM_RUNS):
             print(f"\tValidation {metric}: {perf_metric_val: .4f}, Transductive {metric}: {trans_val: .4f}, Inductive {metric}: {ind_val: .4f}")
             print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
             val_perf_list.append(perf_metric_val)
+            trans_val_list.append(trans_val)
+            ind_val_list.append(ind_val)
 
             # check for early stopping
             if early_stopper.step_check(perf_metric_val, model):
@@ -553,7 +557,11 @@ for run_idx in range(NUM_RUNS):
                   'nei_sampler': args.nei_sampler,
                   'patch_num': args.patch_num,
                   f'val {metric}': val_perf_list,
+                  f'trans_val {metric}': trans_val_list,
+                  f'ind_val {metric}': ind_val_list,
                   f'test {metric}': perf_metric_test,
+                  f'trans_test {metric}': trans_test,
+                  f'ind_test {metric}': ind_test,
                   'test_time': test_time,
                   'tot_train_val_time': train_val_time
                   }, 

@@ -56,6 +56,7 @@ class TGNMemory(torch.nn.Module):
         message_module: Callable,
         aggregator_module: Callable,
         memory_updater_cell: str = "gru",
+        t_enc_grad: bool = False,
     ):
         super().__init__()
 
@@ -67,7 +68,7 @@ class TGNMemory(torch.nn.Module):
         self.msg_s_module = message_module
         self.msg_d_module = copy.deepcopy(message_module)
         self.aggr_module = aggregator_module
-        self.time_enc = TimeEncoder(time_dim)
+        self.time_enc = TimeEncoder(time_dim, t_enc_grad)
         # self.gru = GRUCell(message_module.out_channels, memory_dim)
         if memory_updater_cell == "gru":  # for TGN
             self.memory_updater = GRUCell(message_module.out_channels, memory_dim)

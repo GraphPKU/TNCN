@@ -240,19 +240,20 @@ def adjoverlap(adj1: SparseTensor,
     # a wrapper for functions above.
     adj1 = adj1[tarei[0]]
     adj2 = adj2[tarei[1]]
-    if calresadj:
-        adjoverlap, adjres1, adjres2 = spmoverlap_notoverlap_(adj1, adj2)
-        if cnsampledeg > 0:
-            adjoverlap = sparsesample_reweight(adjoverlap, cnsampledeg)
-        if ressampledeg > 0:
-            adjres1 = sparsesample_reweight(adjres1, ressampledeg)
-            adjres2 = sparsesample_reweight(adjres2, ressampledeg)
-        return adjoverlap, adjres1, adjres2
-    else:
-        adjoverlap = spmoverlap_(adj1, adj2)
-        if cnsampledeg > 0:
-            adjoverlap = sparsesample_reweight(adjoverlap, cnsampledeg)
-    return adjoverlap
+    # if calresadj:
+    #     adjoverlap, adjres1, adjres2 = spmoverlap_notoverlap_(adj1, adj2)
+    #     if cnsampledeg > 0:
+    #         adjoverlap = sparsesample_reweight(adjoverlap, cnsampledeg)
+    #     if ressampledeg > 0:
+    #         adjres1 = sparsesample_reweight(adjres1, ressampledeg)
+    #         adjres2 = sparsesample_reweight(adjres2, ressampledeg)
+    #     return adjoverlap, adjres1, adjres2
+    # else:
+    #     adjoverlap = spmoverlap_(adj1, adj2)
+    #     if cnsampledeg > 0:
+    #         adjoverlap = sparsesample_reweight(adjoverlap, cnsampledeg)
+    # return adjoverlap
+    return spmoverlap_(adj1, adj2)
 
 
 # Edge dropout with adjacency matrix as input
@@ -282,20 +283,74 @@ def sparse_diff(spm_x, spm_y):
     x: bs * nidx, y: bs * nidy
     require nidx >= nidy
     """
-    return spmoverlap_notoverlap_(spm_x, spm_y)[1]
+    # return spmoverlap_notoverlap_(spm_x, spm_y)[1]
+    
+    # assert adj1.sizes() == adj2.sizes()
+    element1 = spm2elem(spm_x)
+    element2 = spm2elem(spm_y)
+
+    if element1.shape[0] == 0:
+        retelem1 = element1
+    else:
+        idx = torch.searchsorted(element1[:-1], element2)
+        matchedmask = (element1[idx] == element2)
+
+        maskelem1 = torch.ones_like(element1, dtype=torch.bool)
+        maskelem1[idx[matchedmask]] = 0
+        retelem1 = element1[maskelem1]
+
+    sizes = spm_x.sizes()
+    return elem2spm(retelem1, sizes)
+
+def sparse_intersect(spm_x, spm_y):
+    """
+    Given 2 sparse tensor spm_x and spm_y, do the intersect x and y.
+    x: bs * nidx, y: bs * nidy
+    """
+    return spmoverlap_(spm_x, spm_y)
 
 if __name__ == "__main__":
+    # adj1 = SparseTensor.from_edge_index(
+    #     torch.LongTensor([[0, 0, 1, 2, 3, 3, 4], [0, 1, 1, 2, 3, 4, 4]]))
+    # adj2 = SparseTensor.from_edge_index(
+    #     torch.LongTensor([[0, 3, 1, 2, 2, 2, 3], [0, 1, 1, 2, 2, 3, 3]]))
+    # adj3 = SparseTensor.from_edge_index(
+    #     torch.LongTensor([[0, 1,  2, 2, 2, 2, 3, 3, 3], [1, 0,  2, 3, 4, 5, 4, 5, 6]]))
+    # # print(spmnotoverlap_(adj1, adj2))
+    # # print(spmoverlap_(adj1, adj2))
+    # print(spmoverlap_notoverlap_(adj1, adj2))
+    # # print(sparsesample2(adj3, 3))
+    # # print(sparsesample_reweight(adj3, 3))
+    # tarei = torch.LongTensor([[2,2],
+    #                           [3,3]])
+    # print(adjoverlap(adj1=adj2, adj2=adj2, tarei=tarei))
+    # adj1 = SparseTensor.from_edge_index(
+    #     torch.LongTensor([[0, 0, 0, 1, 1], [1, 1, 2, 0, 3]]), sparse_sizes=(2,4)).fill_value_(1.0).coalesce()
+    # print(adj1)
+    # x = torch.tensor([[1,0,0,0],
+    #                   [0,1,0,0],
+    #                   [0,0,1,0],
+    #                   [0,0,0,1],
+    #                   ],
+    #                   dtype=torch.float)
+    # from torch_sparse.matmul import spmm_add
+    # print(spmm_add(adj1, x))
+
     adj1 = SparseTensor.from_edge_index(
-        torch.LongTensor([[0, 0, 1, 2, 3, 3, 4], [0, 1, 1, 2, 3, 4, 4]]))
+        torch.LongTensor([[0, 0, 1, 2, 3, 3, 4], 
+                          [0, 1, 1, 2, 3, 4, 4]])).fill_value_(2.0).coalesce()
     adj2 = SparseTensor.from_edge_index(
-        torch.LongTensor([[0, 3, 1, 2, 2, 2, 3], [0, 1, 1, 2, 2, 3, 3]]))
-    adj3 = SparseTensor.from_edge_index(
-        torch.LongTensor([[0, 1,  2, 2, 2, 2, 3, 3, 3], [1, 0,  2, 3, 4, 5, 4, 5, 6]]))
-    # print(spmnotoverlap_(adj1, adj2))
-    # print(spmoverlap_(adj1, adj2))
-    print(spmoverlap_notoverlap_(adj1, adj2))
-    # print(sparsesample2(adj3, 3))
-    # print(sparsesample_reweight(adj3, 3))
-    tarei = torch.LongTensor([[2,2],
-                              [3,3]])
-    print(adjoverlap(adj1=adj2, adj2=adj2, tarei=tarei))
+        torch.LongTensor([[0, 3, 1, 2, 2, 2, 3], 
+                          [0, 1, 1, 2, 2, 3, 3]]))
+    # print(sparse_diff(adj2, adj1))
+    # print(adj1 * adj1)
+    time = torch.rand((2,3))
+    cn = torch.rand((5, 3))
+    spcn = SparseTensor.from_dense(cn)
+    sptime = SparseTensor.from_dense(time)
+    # cn*time
+    # spcn*time
+    print(spcn)
+    print(sptime)
+    print(spcn * sptime)
+    

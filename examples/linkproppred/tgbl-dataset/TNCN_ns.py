@@ -117,51 +117,10 @@ def train():
             pos_re = assoc[pos_dst]
             neg_re = assoc[neg_dst]
 
-            def generate_adj_1_hop():
-                loop_edge = torch.arange(id_num, dtype=torch.int64, device=device)
-                mask = ~ torch.isin(loop_edge, edge_index)
-                loop_edge = loop_edge[mask]
-                loop_edge = torch.stack([loop_edge,loop_edge])
-                if edge_index.size(1) == 0:
-                    adj = SparseTensor.from_edge_index(loop_edge).to_device(device)
-                else:
-                    adj = SparseTensor.from_edge_index(torch.cat((loop_edge, edge_index, torch.stack([edge_index[1], edge_index[0]])),dim=-1)).to_device(device)
-                    # adj = SparseTensor.from_edge_index(edge_index).to_device(device)
-                return adj
-            
-            def generate_adj_0_1_hop():
-                loop_edge = torch.arange(id_num, dtype=torch.int64, device=device)
-                loop_edge = torch.stack([loop_edge,loop_edge])
-                if edge_index.size(1) == 0:
-                    adj = SparseTensor.from_edge_index(loop_edge).to_device(device)
-                else:
-                    adj = SparseTensor.from_edge_index(torch.cat((loop_edge, edge_index, torch.stack([edge_index[1], edge_index[0]])),dim=-1)).to_device(device)
-                return adj
-            
-            def generate_adj_0_1_2_hop(adj):
-                # adj = SparseTensor.to_dense(adj)
-                # adj = torch.mm(adj, adj)
-                # adj = SparseTensor.from_dense(adj)
-                adj = adj.matmul(adj)
-                return adj
+            time_info = (last_update, t)
+            pos_out = model['link_pred'](z, edge_index, torch.stack([src_re,pos_re]), NCN_MODE, cn_time_decay=CN_TIME_DECAY, time_info=time_info)
+            neg_out = model['link_pred'](z, edge_index, torch.stack([src_re,neg_re]), NCN_MODE, cn_time_decay=CN_TIME_DECAY, time_info=time_info)
 
-            if NCN_MODE == 0:
-                adj_0_1 = generate_adj_0_1_hop()
-                adj_1 = generate_adj_1_hop()
-                adjs = (adj_0_1, adj_1)
-            elif NCN_MODE == 1:
-                adj_1 = generate_adj_1_hop()
-                adjs = (adj_1)
-            elif NCN_MODE == 2:
-                adj_0_1 = generate_adj_0_1_hop()
-                adj_1 = generate_adj_1_hop()
-                adj_0_1_2 = generate_adj_0_1_2_hop(adj_1)
-                adjs = (adj_0_1, adj_1, adj_0_1_2)
-            else: 
-                raise ValueError('Invalid NCN Mode! Mode must be 0, 1, or 2.')
-
-            pos_out = model['link_pred'](z, adjs, torch.stack([src_re,pos_re]), NCN_MODE)
-            neg_out = model['link_pred'](z, adjs, torch.stack([src_re,neg_re]), NCN_MODE)
             loss += criterion(pos_out, torch.ones_like(pos_out)) * exact_patch_size
             loss += criterion(neg_out, torch.zeros_like(neg_out)) * exact_patch_size
 
@@ -242,50 +201,8 @@ def test(loader, neg_sampler, split_mode):
                 data.msg[e_id].to(device),
             )
 
-            def generate_adj_1_hop():
-                loop_edge = torch.arange(id_num, dtype=torch.int64, device=device)
-                mask = ~ torch.isin(loop_edge, edge_index)
-                loop_edge = loop_edge[mask]
-                loop_edge = torch.stack([loop_edge,loop_edge])
-                if edge_index.size(1) == 0:
-                    adj = SparseTensor.from_edge_index(loop_edge).to_device(device)
-                else:
-                    adj = SparseTensor.from_edge_index(torch.cat((loop_edge, edge_index, torch.stack([edge_index[1], edge_index[0]])),dim=-1)).to_device(device)
-                    # adj = SparseTensor.from_edge_index(edge_index).to_device(device)
-                return adj
-            
-            def generate_adj_0_1_hop():
-                loop_edge = torch.arange(id_num, dtype=torch.int64, device=device)
-                loop_edge = torch.stack([loop_edge,loop_edge])
-                if edge_index.size(1) == 0:
-                    adj = SparseTensor.from_edge_index(loop_edge).to_device(device)
-                else:
-                    adj = SparseTensor.from_edge_index(torch.cat((loop_edge, edge_index, torch.stack([edge_index[1], edge_index[0]])),dim=-1)).to_device(device)
-                return adj
-            
-            def generate_adj_0_1_2_hop(adj):
-                # adj = SparseTensor.to_dense(adj)
-                # adj = torch.mm(adj, adj)
-                # adj = SparseTensor.from_dense(adj)
-                adj = adj.matmul(adj)
-                return adj
-
-            if NCN_MODE == 0:
-                adj_0_1 = generate_adj_0_1_hop()
-                adj_1 = generate_adj_1_hop()
-                adjs = (adj_0_1, adj_1)
-            elif NCN_MODE == 1:
-                adj_1 = generate_adj_1_hop()
-                adjs = (adj_1)
-            elif NCN_MODE == 2:
-                adj_0_1 = generate_adj_0_1_hop()
-                adj_1 = generate_adj_1_hop()
-                adj_0_1_2 = generate_adj_0_1_2_hop(adj_1)
-                adjs = (adj_0_1, adj_1, adj_0_1_2)
-            else:
-                raise ValueError('Invalid NCN Mode! Mode must be 0, 1, or 2.')
-
-            y_pred = model['link_pred'](z, adjs, torch.stack([assoc[src], assoc[dst]]), NCN_MODE)
+            time_info = (last_update, pos_t)
+            y_pred = model['link_pred'](z, edge_index, torch.stack([assoc[src], assoc[dst]]), NCN_MODE, cn_time_decay=CN_TIME_DECAY, time_info=time_info)
 
             # compute MRR
             input_dict = {
@@ -349,6 +266,7 @@ HOP_NUM = args.hop_num
 NCN_MODE = args.NCN_mode
 PER_VAL_EPOCH = args.per_val_epoch
 device = args.device
+CN_TIME_DECAY = False
 
 K_PATCH = args.patch_num
 
@@ -450,7 +368,8 @@ memory = TGNMemory(
 
 gnn = get_emb_module(args.emb_func)
 
-link_pred = NCNPredictor(in_channels=EMB_DIM, hidden_channels=EMB_DIM, 
+hidden_channels = 256 # EMB_DIM
+link_pred = NCNPredictor(in_channels=EMB_DIM, hidden_channels=hidden_channels,
                          out_channels=1, NCN_mode=NCN_MODE).to(device)
 
 model = {'memory': memory,

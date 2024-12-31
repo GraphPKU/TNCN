@@ -27,6 +27,10 @@ class NCNPredictor(torch.nn.Module):
             k = 2
         elif NCN_mode == 2:
             k = 8
+        elif NCN_mode == 22:
+            k = 3
+        elif NCN_mode == 1222:
+            k = 5
         else:
             raise ValueError('Invalid NCN Mode! Mode must be 0, 1, or 2.')
         self.xslin = nn.Linear(k * in_channels, out_channels) # TODO: add more layers
@@ -189,6 +193,99 @@ class NCNPredictor(torch.nn.Module):
             special_xcn_2_2 = spmm_add(special_2_2, x)
             # cn_emb = torch.cat([xcn_0_1, xcn_1_0, xcn_1_1, xcn_1_2, xcn_2_1, xcn_2_2], dim=-1)
             cn_emb = torch.cat([xcn_0_1, xcn_1_0, xcn_1_1, xcn_1_2, xcn_2_1, xcn_2_2, special_xcn_2_2], dim=-1)
+
+        elif NCN_mode == 22:
+            adj1 = SparseTensor.from_edge_index(torch.cat((edge_index, torch.stack([edge_index[1], edge_index[0]])),dim=-1), 
+                                                sparse_sizes=(id_num, id_num)).fill_value_(1.0).coalesce().to(x.device)
+            adj2 = adj1.matmul(adj1) # self: fake 2 hop
+            k3cycle = adj2.matmul(adj1)
+            i_1_v, i_2_v, j_1_v, j_2_v = (
+                adj1[tar_i], adj2[tar_i],
+                adj1[tar_j], adj2[tar_j]
+            )
+            i_1_e, j_1_e = (
+                i_1_v.fill_value_(1.0), 
+                j_1_v.fill_value_(1.0), 
+            )
+
+            # weight: *
+            cn_1_1 = (i_1_v * j_1_v)
+            cn_2_2 = ( 
+                (i_2_v * j_2_v)
+            )
+            u_v_value = adj1[tar_i, tar_j].to_dense().diag().reshape(-1, 1) * (-1)
+            row, col, value = cn_1_1.coo()
+            neg_cn_1_1 = SparseTensor(row=row, col=col, value=-value, sparse_sizes=cn_1_1.sparse_sizes()).to_device(x.device)
+            delta_2_2 = (i_1_e * k3cycle[tar_i, tar_i].to_dense().diag().reshape(-1, 1) + 
+                         j_1_e * k3cycle[tar_j, tar_j].to_dense().diag().reshape(-1, 1) + neg_cn_1_1) * u_v_value
+            special_2_2 = cn_1_1.matmul(adj1)
+            delta_2_2 = delta_2_2 + special_2_2
+
+            cn_2_2 = cn_2_2 + delta_2_2
+            idx = torch.arange(0, len(tar_i), device=x.device).repeat(2)
+            u_v_mask = torch.cat([tar_i, tar_j], dim=0)
+
+            cn_2_2 = cn_2_2.to_dense()
+            cn_2_2[idx, u_v_mask] = 0
+            cn_2_2[cn_2_2 < 0] = 0
+
+            cn_2_2 = SparseTensor.from_dense(cn_2_2)
+            xcn_2_2 = (
+                spmm_add(cn_2_2, x)
+            )
+            special_xcn_2_2 = spmm_add(special_2_2, x)
+            cn_emb = torch.cat([xcn_2_2, special_xcn_2_2], dim=-1)
+
+        elif NCN_mode == 1222:
+            adj1 = SparseTensor.from_edge_index(torch.cat((edge_index, torch.stack([edge_index[1], edge_index[0]])),dim=-1), 
+                                                sparse_sizes=(id_num, id_num)).fill_value_(1.0).coalesce().to(x.device)
+            adj2 = adj1.matmul(adj1) # self: fake 2 hop
+            k3cycle = adj2.matmul(adj1)
+            i_1_v, i_2_v, j_1_v, j_2_v = (
+                adj1[tar_i], adj2[tar_i],
+                adj1[tar_j], adj2[tar_j]
+            )
+            i_1_e, j_1_e = (
+                i_1_v.fill_value_(1.0),
+                j_1_v.fill_value_(1.0),
+            )
+
+            # weight: *
+            cn_1_1 = (i_1_v * j_1_v)
+            cn_1_2, cn_2_1, cn_2_2 = (
+                (i_1_v * j_2_v), 
+                (i_2_v * j_1_v), 
+                (i_2_v * j_2_v)
+            )
+            u_v_value = adj1[tar_i, tar_j].to_dense().diag().reshape(-1, 1) * (-1)
+            delta_1_2 = i_1_v * i_1_v * u_v_value
+            delta_2_1 = j_1_v * j_1_v * u_v_value
+            row, col, value = cn_1_1.coo()
+            neg_cn_1_1 = SparseTensor(row=row, col=col, value=-value, sparse_sizes=cn_1_1.sparse_sizes()).to_device(x.device)
+            delta_2_2 = (i_1_e * k3cycle[tar_i, tar_i].to_dense().diag().reshape(-1, 1) + 
+                         j_1_e * k3cycle[tar_j, tar_j].to_dense().diag().reshape(-1, 1) + neg_cn_1_1) * u_v_value
+            special_2_2 = cn_1_1.matmul(adj1)
+            delta_2_2 = delta_2_2 + special_2_2
+
+            cn_1_2, cn_2_1 = cn_1_2 + delta_1_2, cn_2_1 + delta_2_1
+            cn_2_2 = cn_2_2 + delta_2_2
+            idx = torch.arange(0, len(tar_i), device=x.device).repeat(2)
+            u_v_mask = torch.cat([tar_i, tar_j], dim=0)
+
+            cn_1_2, cn_2_1, cn_2_2 = cn_1_2.to_dense(), cn_2_1.to_dense(), cn_2_2.to_dense()
+            cn_1_2[idx, u_v_mask] = 0
+            cn_2_1[idx, u_v_mask] = 0
+            cn_2_2[idx, u_v_mask] = 0
+            cn_2_2[cn_2_2 < 0] = 0
+
+            cn_1_2, cn_2_1, cn_2_2 = SparseTensor.from_dense(cn_1_2), SparseTensor.from_dense(cn_2_1), SparseTensor.from_dense(cn_2_2)
+            xcn_1_2, xcn_2_1, xcn_2_2 = (
+                spmm_add(cn_1_2, x),
+                spmm_add(cn_2_1, x),
+                spmm_add(cn_2_2, x)
+            )
+            special_xcn_2_2 = spmm_add(special_2_2, x)
+            cn_emb = torch.cat([xcn_1_2, xcn_2_1, xcn_2_2, special_xcn_2_2], dim=-1)
 
         else:
             raise ValueError('Invalid NCN Mode! Mode must be 0, 1, or 2.')

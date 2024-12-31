@@ -33,8 +33,6 @@ class NCNPredictor(torch.nn.Module):
         self.xsmlp = nn.Sequential(
             nn.Linear(k * in_channels, hidden_channels),
             nn.ReLU(),
-            # nn.Linear(2*hidden_channels, hidden_channels),
-            # nn.ReLU(),
             nn.Linear(hidden_channels, out_channels)
         )
 
@@ -73,9 +71,6 @@ class NCNPredictor(torch.nn.Module):
             cn_0_1, cn_1_0 = (i_0_v * j_1_v), (i_1_v * j_0_v)
             cn_1_1 = (i_1_v * j_1_v)
 
-            # cn_0_1 = adjoverlap(adj0, adj1, tar_ei)
-            # cn_1_0 = adjoverlap(adj1, adj0, tar_ei)
-            # cn_1_1 = adjoverlap(adj1, adj1, tar_ei)
             if cn_time_decay:
                 cn_0_1, cn_1_0, cn_1_1 = (
                     cn_0_1 * time_decay_matrix, 
@@ -96,7 +91,6 @@ class NCNPredictor(torch.nn.Module):
             i_1_e, j_1_e = i_1_v.fill_value_(1.0), j_1_v.fill_value_(1.0)
             # cn_1_1 = (i_1_v * j_1_e + i_1_e * j_1_v) # weight: +
             cn_1_1 = (i_1_v * j_1_v) # weight: *
-            # cn_1_1 = adjoverlap(adj1, adj1, tar_ei)
             if cn_time_decay:
                 cn_1_1 = cn_1_1 * time_decay_matrix
             xcn_1_1 = spmm_add(cn_1_1, x)
@@ -149,22 +143,10 @@ class NCNPredictor(torch.nn.Module):
             u_v_mask = torch.cat([tar_i, tar_j], dim=0)
 
             cn_1_2, cn_2_1, cn_2_2 = cn_1_2.to_dense(), cn_2_1.to_dense(), cn_2_2.to_dense()
-            # print(cn_1_2.shape, cn_2_1.shape, cn_2_2.shape, idx.shape, u_v_mask.shape)
             cn_1_2[idx, u_v_mask] = 0
             cn_2_1[idx, u_v_mask] = 0
             cn_2_2[idx, u_v_mask] = 0
             cn_2_2[cn_2_2 < 0] = 0
-            # cn_1_2, cn_2_1, cn_2_2 = SparseTensor.from_dense(cn_1_2), SparseTensor.from_dense(cn_2_1), SparseTensor.from_dense(cn_2_2)
-
-            # print(cn_1_2, cn_2_1, cn_2_2)
-            # input("pause")
-
-            # cn_0_1 = adjoverlap(adj0, adj1, tar_ei).coalesce()
-            # cn_1_0 = adjoverlap(adj1, adj0, tar_ei).coalesce()
-            # cn_1_1 = adjoverlap(adj1, adj1, tar_ei).coalesce()
-            # cn_1_2 = adjoverlap(adj1, adj2, tar_ei).coalesce()
-            # cn_2_1 = adjoverlap(adj2, adj1, tar_ei).coalesce()
-            # cn_2_2 = adjoverlap(adj2, adj2, tar_ei).coalesce()
 
             if cn_time_decay:
                 cn_0_1, cn_1_0, cn_1_1 = cn_0_1.to_dense(), cn_1_0.to_dense(), cn_1_1.to_dense()
@@ -187,7 +169,6 @@ class NCNPredictor(torch.nn.Module):
                 spmm_add(cn_2_2, x)
             )
             special_xcn_2_2 = spmm_add(special_2_2, x)
-            # cn_emb = torch.cat([xcn_0_1, xcn_1_0, xcn_1_1, xcn_1_2, xcn_2_1, xcn_2_2], dim=-1)
             cn_emb = torch.cat([xcn_0_1, xcn_1_0, xcn_1_1, xcn_1_2, xcn_2_1, xcn_2_2, special_xcn_2_2], dim=-1)
 
         else:

@@ -117,51 +117,9 @@ def train():
             pos_re = assoc[pos_dst]
             neg_re = assoc[neg_dst]
 
-            def generate_adj_1_hop():
-                loop_edge = torch.arange(id_num, dtype=torch.int64, device=device)
-                mask = ~ torch.isin(loop_edge, edge_index)
-                loop_edge = loop_edge[mask]
-                loop_edge = torch.stack([loop_edge,loop_edge])
-                if edge_index.size(1) == 0:
-                    adj = SparseTensor.from_edge_index(loop_edge).to_device(device)
-                else:
-                    adj = SparseTensor.from_edge_index(torch.cat((loop_edge, edge_index, torch.stack([edge_index[1], edge_index[0]])),dim=-1)).to_device(device)
-                    # adj = SparseTensor.from_edge_index(edge_index).to_device(device)
-                return adj
-            
-            def generate_adj_0_1_hop():
-                loop_edge = torch.arange(id_num, dtype=torch.int64, device=device)
-                loop_edge = torch.stack([loop_edge,loop_edge])
-                if edge_index.size(1) == 0:
-                    adj = SparseTensor.from_edge_index(loop_edge).to_device(device)
-                else:
-                    adj = SparseTensor.from_edge_index(torch.cat((loop_edge, edge_index, torch.stack([edge_index[1], edge_index[0]])),dim=-1)).to_device(device)
-                return adj
-            
-            def generate_adj_0_1_2_hop(adj):
-                # adj = SparseTensor.to_dense(adj)
-                # adj = torch.mm(adj, adj)
-                # adj = SparseTensor.from_dense(adj)
-                adj = adj.matmul(adj)
-                return adj
-
-            if NCN_MODE == 0:
-                adj_0_1 = generate_adj_0_1_hop()
-                adj_1 = generate_adj_1_hop()
-                adjs = (adj_0_1, adj_1)
-            elif NCN_MODE == 1:
-                adj_1 = generate_adj_1_hop()
-                adjs = (adj_1)
-            elif NCN_MODE == 2:
-                adj_0_1 = generate_adj_0_1_hop()
-                adj_1 = generate_adj_1_hop()
-                adj_0_1_2 = generate_adj_0_1_2_hop(adj_1)
-                adjs = (adj_0_1, adj_1, adj_0_1_2)
-            else: 
-                raise ValueError('Invalid NCN Mode! Mode must be 0, 1, or 2.')
-
-            pos_out = model['link_pred'](z, adjs, torch.stack([src_re,pos_re]), NCN_MODE)
-            neg_out = model['link_pred'](z, adjs, torch.stack([nsrc_re,neg_re]), NCN_MODE)
+            time_info = (last_update, t)
+            pos_out = model['link_pred'](z, edge_index, torch.stack([src_re,pos_re]), NCN_MODE, cn_time_decay=CN_TIME_DECAY, time_info=time_info)
+            neg_out = model['link_pred'](z, edge_index, torch.stack([src_re,neg_re]), NCN_MODE, cn_time_decay=CN_TIME_DECAY, time_info=time_info)
             loss += criterion(pos_out, torch.ones_like(pos_out)) * exact_patch_size
             loss += criterion(neg_out, torch.zeros_like(neg_out)) * exact_patch_size
 
@@ -259,51 +217,9 @@ def test(loader, neg_sampler: RandEdgeSampler, split_mode):
             pos_re = assoc[pos_dst]
             neg_re = assoc[neg_dst]
 
-            def generate_adj_1_hop():
-                loop_edge = torch.arange(id_num, dtype=torch.int64, device=device)
-                mask = ~ torch.isin(loop_edge, edge_index)
-                loop_edge = loop_edge[mask]
-                loop_edge = torch.stack([loop_edge,loop_edge])
-                if edge_index.size(1) == 0:
-                    adj = SparseTensor.from_edge_index(loop_edge).to_device(device)
-                else:
-                    adj = SparseTensor.from_edge_index(torch.cat((loop_edge, edge_index, torch.stack([edge_index[1], edge_index[0]])),dim=-1)).to_device(device)
-                    # adj = SparseTensor.from_edge_index(edge_index).to_device(device)
-                return adj
-            
-            def generate_adj_0_1_hop():
-                loop_edge = torch.arange(id_num, dtype=torch.int64, device=device)
-                loop_edge = torch.stack([loop_edge,loop_edge])
-                if edge_index.size(1) == 0:
-                    adj = SparseTensor.from_edge_index(loop_edge).to_device(device)
-                else:
-                    adj = SparseTensor.from_edge_index(torch.cat((loop_edge, edge_index, torch.stack([edge_index[1], edge_index[0]])),dim=-1)).to_device(device)
-                return adj
-            
-            def generate_adj_0_1_2_hop(adj):
-                # adj = SparseTensor.to_dense(adj)
-                # adj = torch.mm(adj, adj)
-                # adj = SparseTensor.from_dense(adj)
-                adj = adj.matmul(adj)
-                return adj
-
-            if NCN_MODE == 0:
-                adj_0_1 = generate_adj_0_1_hop()
-                adj_1 = generate_adj_1_hop()
-                adjs = (adj_0_1, adj_1)
-            elif NCN_MODE == 1:
-                adj_1 = generate_adj_1_hop()
-                adjs = (adj_1)
-            elif NCN_MODE == 2:
-                adj_0_1 = generate_adj_0_1_hop()
-                adj_1 = generate_adj_1_hop()
-                adj_0_1_2 = generate_adj_0_1_2_hop(adj_1)
-                adjs = (adj_0_1, adj_1, adj_0_1_2)
-            else:
-                raise ValueError('Invalid NCN Mode! Mode must be 0, 1, or 2.')
-
-            pos_pred = model['link_pred'](z, adjs, torch.stack([src_re, pos_re]), NCN_MODE)
-            neg_pred = model['link_pred'](z, adjs, torch.stack([nsrc_re, neg_re]), NCN_MODE)
+            time_info = (last_update, pos_t)
+            pos_pred = model['link_pred'](z, edge_index, torch.stack([src_re, pos_re]), NCN_MODE, cn_time_decay=CN_TIME_DECAY, time_info=time_info)
+            neg_pred = model['link_pred'](z, edge_index, torch.stack([src_re, neg_re]), NCN_MODE, cn_time_decay=CN_TIME_DECAY, time_info=time_info)
 
             neighbor_loader.insert(pos_src, pos_dst)
             for s, d, t in zip(pos_src, pos_dst, pos_t):
@@ -379,6 +295,7 @@ NUM_NEIGHBORS = args.num_neighbors
 HOP_NUM = args.hop_num
 NCN_MODE = args.NCN_mode
 PER_VAL_EPOCH = args.per_val_epoch
+CN_TIME_DECAY = False
 
 K_PATCH = args.patch_num
 inductive = True
@@ -387,7 +304,7 @@ MODEL_NAME = 'TNCN'
 # ==========
 
 # set the device
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = args.device
 
 # get data
 data, train_data, val_data, test_data, new_node_val_data, new_node_test_data, metric = get_data(DATA_DIR, DATA, include_padding=True)

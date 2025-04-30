@@ -84,6 +84,21 @@ class LastNeighborLoader:
         self.cur_e_id = 0
         self.e_id.fill_(-1)
 
+    def _save(self):
+        # save the current state to file
+        torch.save(
+            self.__dict__,
+            "saved_models/last_neighbor_loader.pt",
+        )
+
+    def _load(self):
+        # load the state from file
+        self.__dict__.update(
+            torch.load(
+                "saved_models/last_neighbor_loader.pt",
+            )
+        )
+
 class RandomNeighborLoader:
     def __init__(self, num_nodes: int, size: int, device=None):
         self.size = size

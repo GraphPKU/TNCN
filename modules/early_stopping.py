@@ -77,6 +77,11 @@ class EarlyStopMonitor(object):
         torch.save({model_names[i]: model_components[i].state_dict() for i in range(len(model_names))}, 
                     model_path)
 
+        # save the msg dict in model["memory"] module
+        if "memory" in model_names:
+            torch.save(models_dict["memory"].msg_s_store, model_path.replace(".pth", "_msg_s_dict.pth"))
+            torch.save(models_dict["memory"].msg_d_store, model_path.replace(".pth", "_msg_d_dict.pth"))
+
     def load_checkpoint(self, models_dict: dict):
         r"""
         save models from the checkpoint

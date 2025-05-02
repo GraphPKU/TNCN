@@ -36,7 +36,14 @@ DATA_EVAL_METRIC_DICT = {
     "mooc": "ap",
     "lastfm": "ap",
     "enron": "ap",
+    "SocialEvo": "ap",
     "uci": "ap",
+    "UNtrade": "ap",
+    "UNvote": "ap",
+    "USLegis": "ap",
+    "CanParl": "ap",
+    "Contacts": "ap",
+    "Flights": "ap",
 }
 
 """

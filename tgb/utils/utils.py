@@ -64,6 +64,7 @@ def get_args():
     parser.add_argument('--per_val_epoch', type=int, help='val per k epoch', default=1)
     parser.add_argument('--patch_num', type=int, help='patch number', default=1)
     parser.add_argument('--msg_func', type=str, help='message function', default='identity')
+    parser.add_argument('--upd_func', type=str, help='update function', default='gru', choices=['gru', 'rnn'])
     parser.add_argument('--emb_func', type=str, help='embedding function', default='GraphAttention')
     parser.add_argument('--agg_func', type=str, help='aggregator', default='last')
     parser.add_argument('--device', type=str, help='device', default=torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))

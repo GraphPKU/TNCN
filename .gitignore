@@ -1,6 +1,8 @@
 !requirements*.txt
 get_croissant.py
 #dataset
+datasets_readme.md
+*DS_Store
 stats_figures/
 figs/
 *.xz

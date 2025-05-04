@@ -40,6 +40,23 @@ class LinkPredictor_h(torch.nn.Module):
         h = torch.mul(z_src, z_dst).reshape(-1, self.in_channels)
         return self.lin_final(h) #.sigmoid()
 
+class LinkPredictor_h_ORD(torch.nn.Module):
+    """
+    Reference:
+    - https://github.com/pyg-team/pytorch_geometric/blob/master/examples/tgn.py
+    """
+
+    def __init__(self, in_channels):
+        super().__init__()
+        self.in_channels = in_channels
+        self.lin_final = Linear(3 * in_channels, 1)
+
+    def forward(self, z_src, z_dst, zs_ord, zd_ord):
+        h = torch.mul(z_src, z_dst).reshape(-1, self.in_channels)
+        hord = torch.mul(zs_ord, zd_ord).reshape(-1, 2 * self.in_channels)
+        s = torch.cat([h, hord], dim=1)
+        return self.lin_final(s) #.sigmoid()
+
 class MergeLayer(torch.nn.Module):
   def __init__(self, dim1, dim2, dim3, dim4):
     super().__init__()

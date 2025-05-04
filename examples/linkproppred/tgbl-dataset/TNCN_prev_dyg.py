@@ -27,7 +27,8 @@ from modules.memory_module import TGNMemory
 from modules.early_stopping import  EarlyStopMonitor
 from tgb.linkproppred.dataset_pyg import PyGLinkPropPredDataset
 
-from modules.NCNDecoder.NCNPred import NCNPredictor
+from modules.NCNDecoder.NCNPred import NCNPredictor, NCNPredwithORD, NCNPredWOW
+from modules.neighbor_sampler_ns import get_neighbor_sampler, NeighborSampler, NegativeEdgeSampler
 
 
 # ==========
@@ -51,88 +52,61 @@ def train():
     model['link_pred'].train()
 
     model['memory'].reset_state()  # Start with a fresh memory.
-    neighbor_loader.reset_state()  # Start with an empty graph.
+    # neighbor_loader.reset_state()  # Start with an empty graph.
 
     total_loss = 0
-    # clear the upd_time_table
-    upd_time_table.zero_()
 
     for batch in tqdm(train_loader):
         batch = batch.to(device)
         optimizer.zero_grad()
 
-        bsrc, bpos_dst, bt, bmsg = batch.src, batch.dst, batch.t, batch.msg
+        src, pos_dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
 
         # Sample negative destination nodes.
-        bneg_dst = torch.randint(
-            min_dst_idx,
-            max_dst_idx + 1,
-            (bsrc.size(0),),
-            dtype=torch.long,
-            device=device,
+        # neg_dst = torch.randint(
+        #     min_dst_idx,
+        #     max_dst_idx + 1,
+        #     (src.size(0),),
+        #     dtype=torch.long,
+        #     device=device,
+        # )
+        _, neg_dst = train_neg_edge_sampler.sample(src.size(0))
+
+        # n_id = torch.cat([src, pos_dst, neg_dst]).unique()
+        n_t = torch.cat([t, t, t])
+        n_id, unique_idx = np.unique(torch.cat([src, pos_dst, neg_dst]).cpu().numpy(), return_index=True)
+        n_t = n_t[unique_idx]
+        
+        n_id, edge_index, e_id = train_find_neighbor(train_neighbor_sampler, n_id, n_t, HOP_NUM)
+        # n_id, edge_index, e_id = find_neighbor(neighbor_loader, n_id, HOP_NUM)
+        assoc[n_id] = torch.arange(n_id.size(0), device=device)
+
+        # Get updated memory of all nodes involved in the computation.
+        z, last_update = model['memory'](n_id)
+
+        z = model['gnn'](
+            z,
+            last_update,
+            edge_index,
+            data.t[e_id].to(device),
+            data.msg[e_id].to(device),
         )
+        ################################################################
+        
+        src_re = assoc[src]
+        pos_re = assoc[pos_dst]
+        neg_re = assoc[neg_dst]
 
-        bn_id = torch.cat([bsrc, bpos_dst, bneg_dst]).unique()
-        bz, blast_update = model['memory'](bn_id)
-        assert blast_update.allclose(upd_time_table[bn_id])
-
-        loss = 0.0
-
-        patch_size = math.ceil(bsrc.size(0) / K_PATCH)
-        for k in range(K_PATCH):
-            start_idx = k * patch_size
-            end_idx = min((k + 1) * patch_size, bsrc.size(0))
-            exact_patch_size = end_idx - start_idx
-            if exact_patch_size <= 0:
-                break
-
-            src, pos_dst, t, msg, neg_dst = (
-                bsrc[start_idx:end_idx],
-                bpos_dst[start_idx:end_idx],
-                bt[start_idx:end_idx],
-                bmsg[start_idx:end_idx],
-                bneg_dst[start_idx:end_idx],
-            )
-            n_id = torch.cat([src, pos_dst, neg_dst]).unique()
-            # n_id, edge_index, e_id = neighbor_loader(n_id)
-            n_id, edge_index, e_id = find_neighbor(neighbor_loader, n_id, HOP_NUM)
-            assoc[n_id] = torch.arange(n_id.size(0), device=device)
-
-            id_num = n_id.size(0)
-
-            # Get updated memory of all nodes involved in the computation.
-            z, last_update = model['memory'](n_id)
-
-            z = model['gnn'](
-                z,
-                last_update,
-                edge_index,
-                data.t[e_id].to(device),
-                data.msg[e_id].to(device),
-            )
-            
-            ################################################################
-            
-            src_re = assoc[src]
-            pos_re = assoc[pos_dst]
-            neg_re = assoc[neg_dst]
-
-            time_info = (last_update, t)
-            pos_out = model['link_pred'](z, edge_index, torch.stack([src_re,pos_re]), NCN_MODE, cn_time_decay=CN_TIME_DECAY, time_info=time_info)
-            neg_out = model['link_pred'](z, edge_index, torch.stack([src_re,neg_re]), NCN_MODE, cn_time_decay=CN_TIME_DECAY, time_info=time_info)
-
-            loss += criterion(pos_out, torch.ones_like(pos_out)) * exact_patch_size
-            loss += criterion(neg_out, torch.zeros_like(neg_out)) * exact_patch_size
-
-            neighbor_loader.insert(src, pos_dst)
-            for s, d, t in zip(src, pos_dst, t):
-                upd_time_table[s] = t
-                upd_time_table[d] = t
+        time_info = (last_update, t)
+        pos_out = model['link_pred'](z, edge_index, torch.stack([src_re,pos_re]), NCN_MODE, cn_time_decay=CN_TIME_DECAY, time_info=time_info)#, z=(z2_src, z2_pos_dst))
+        neg_out = model['link_pred'](z, edge_index, torch.stack([src_re,neg_re]), NCN_MODE, cn_time_decay=CN_TIME_DECAY, time_info=time_info)#, z=(z2_src, z2_neg_dst))
+        loss = criterion(pos_out, torch.ones_like(pos_out))
+        loss += criterion(neg_out, torch.zeros_like(neg_out))
 
         # Update memory and neighbor loader with ground-truth state.
-        model['memory'].update_state(bsrc, bpos_dst, bt, bmsg)
+        model['memory'].update_state(src, pos_dst, t, msg)
+        # neighbor_loader.insert(src, pos_dst)
 
-        loss /= batch.num_events
         loss.backward()
         optimizer.step()
         model['memory'].detach()
@@ -167,11 +141,7 @@ def test(loader, neg_sampler, split_mode):
             pos_batch.t,
             pos_batch.msg,
         )
-
-        bn_id = torch.cat([pos_src, pos_dst]).unique()
-        bz, blast_update = model['memory'](bn_id)
-        assert blast_update.allclose(upd_time_table[bn_id])
-
+        
         #########################
         neg_batch_list = neg_sampler.query_batch(pos_src, pos_dst, pos_t, split_mode=split_mode)
 
@@ -185,12 +155,16 @@ def test(loader, neg_sampler, split_mode):
                 device=device,
             )
 
-            n_id = torch.cat([src, dst]).unique()
-            # n_id, edge_index, e_id = neighbor_loader(n_id)
-            n_id, edge_index, e_id = find_neighbor(neighbor_loader, n_id, HOP_NUM)
+            # n_id = torch.cat([src, dst]).unique()
+            n_t = pos_t[idx].repeat(len(src) + len(dst))
+            n_id, unique_idx = np.unique(torch.cat([src, dst]).cpu().numpy(), return_index=True)
+            n_t = n_t[unique_idx]
+
+            n_id, edge_index, e_id = test_find_neighbor(full_neighbor_sampler, n_id, n_t, HOP_NUM)
+
+            # n_id, edge_index, e_id = find_neighbor(neighbor_loader, n_id, HOP_NUM)
             assoc[n_id] = torch.arange(n_id.size(0), device=device)
             
-            id_num = n_id.size(0)
             # Get updated memory of all nodes involved in the computation.
             z, last_update = model['memory'](n_id)
             z = model['gnn'](
@@ -200,9 +174,9 @@ def test(loader, neg_sampler, split_mode):
                 data.t[e_id].to(device),
                 data.msg[e_id].to(device),
             )
-
-            time_info = (last_update, pos_t)
-            y_pred = model['link_pred'](z, edge_index, torch.stack([assoc[src], assoc[dst]]), NCN_MODE, cn_time_decay=CN_TIME_DECAY, time_info=time_info)
+            
+            time_info = (last_update, pos_t[idx].repeat(len(src)))
+            y_pred = model['link_pred'](z, edge_index, torch.stack([assoc[src], assoc[dst]]), NCN_MODE, cn_time_decay=CN_TIME_DECAY, time_info=time_info)#, z=(z2_src, z2_dst))
 
             # compute MRR
             input_dict = {
@@ -212,10 +186,6 @@ def test(loader, neg_sampler, split_mode):
             }
             perf = evaluator.eval(input_dict)[metric]
             perf_list.append(perf)
-
-            neighbor_loader.insert(src[0:1], dst[0:1])
-            upd_time_table[src[0:1]] = pos_t[idx]
-            upd_time_table[dst[0:1]] = pos_t[idx]
 
         # Update memory and neighbor loader with ground-truth state.
         model['memory'].update_state(pos_src, pos_dst, pos_t, pos_msg)
@@ -235,6 +205,84 @@ def find_neighbor(neighbor_loader, n_id, k=1):
     for i in range(k-1):
         n_id, _, _ = neighbor_loader(n_id)
     neighbor_info = neighbor_loader(n_id)
+    return neighbor_info
+
+def train_find_neighbor(neighbor_sampler: NeighborSampler, n_id, times, k=1):
+    # np_n_id = n_id.cpu().numpy()
+    np_n_id = n_id
+    np_times = times.cpu().numpy()
+    # print("np_n_id", np_n_id)
+    for i in range(k-1):
+        n_node_ids, _, n_ts = neighbor_sampler.get_historical_neighbors(np_n_id, np_times, NUM_NEIGHBORS)
+        np_n_id = np.concatenate([np_n_id, n_node_ids])
+        np_times = np.concatenate([np_times, n_ts])
+        # get the unique nodes and mask
+        np_n_id, unique_idx = np.unique(np_n_id, return_index=True)
+        np_times = np_times[unique_idx]
+
+    n_node_ids, n_edge_ids, n_ts = neighbor_sampler.get_historical_neighbors(np_n_id, np_times, NUM_NEIGHBORS)
+    # print("n_edge_ids", n_edge_ids-1)
+    # for i in range(len(n_node_ids)):
+    #     print(n_node_ids[i], train_data.src[n_edge_ids[i]-1], train_data.dst[n_edge_ids[i]-1])
+    #     assert (n_node_ids[i] == train_data.src[n_edge_ids[i]-1] or n_node_ids[i] == train_data.dst[n_edge_ids[i]-1])
+    # assert len(n_node_ids) == len(n_ts)
+    # assert len(n_node_ids) == len(n_edge_ids)
+    np_n_id = np.concatenate([np_n_id, n_node_ids])
+    np_times = np.concatenate([np_times, n_ts])
+    # get the unique nodes and mask
+    np_n_id, unique_idx = np.unique(np_n_id, return_index=True)
+    np_times = np_times[unique_idx]
+    np_edge_id = n_edge_ids - 1
+    # print("np_edge_id", np_edge_id)
+    # print("np_n_id", np_n_id)
+    torch_n_id = torch.from_numpy(np_n_id).long().to(device)
+    torch_edge_index = torch.stack([train_data.src[np_edge_id], train_data.dst[np_edge_id]]).long().to(device)
+    torch_e_id = torch.from_numpy(np_edge_id).long().to(device)
+
+    assoc[torch_n_id] = torch.arange(torch_n_id.size(0), device=device)
+    torch_edge_index[0] = assoc[torch_edge_index[0]]
+    torch_edge_index[1] = assoc[torch_edge_index[1]]
+
+    neighbor_info = (torch_n_id, torch_edge_index, torch_e_id)
+    return neighbor_info
+
+def test_find_neighbor(neighbor_sampler: NeighborSampler, n_id, times, k=1):
+    # np_n_id = n_id.cpu().numpy()
+    np_n_id = n_id
+    np_times = times.cpu().numpy()
+    # print("np_n_id", np_n_id)
+    for i in range(k-1):
+        n_node_ids, _, n_ts = neighbor_sampler.get_historical_neighbors(np_n_id, np_times, NUM_NEIGHBORS)
+        np_n_id = np.concatenate([np_n_id, n_node_ids])
+        np_times = np.concatenate([np_times, n_ts])
+        # get the unique nodes and mask
+        np_n_id, unique_idx = np.unique(np_n_id, return_index=True)
+        np_times = np_times[unique_idx]
+
+    n_node_ids, n_edge_ids, n_ts = neighbor_sampler.get_historical_neighbors(np_n_id, np_times, NUM_NEIGHBORS)
+    # print("n_edge_ids", n_edge_ids-1)
+    # for i in range(len(n_node_ids)):
+    #     print(n_node_ids[i], train_data.src[n_edge_ids[i]-1], train_data.dst[n_edge_ids[i]-1])
+    #     assert (n_node_ids[i] == train_data.src[n_edge_ids[i]-1] or n_node_ids[i] == train_data.dst[n_edge_ids[i]-1])
+    # assert len(n_node_ids) == len(n_ts)
+    # assert len(n_node_ids) == len(n_edge_ids)
+    np_n_id = np.concatenate([np_n_id, n_node_ids])
+    np_times = np.concatenate([np_times, n_ts])
+    # get the unique nodes and mask
+    np_n_id, unique_idx = np.unique(np_n_id, return_index=True)
+    np_times = np_times[unique_idx]
+    np_edge_id = n_edge_ids - 1
+    # print("np_edge_id", np_edge_id)
+    # print("np_n_id", np_n_id)
+    torch_n_id = torch.from_numpy(np_n_id).long().to(device)
+    torch_edge_index = torch.stack([data.src[np_edge_id], data.dst[np_edge_id]]).long().to(device)
+    torch_e_id = torch.from_numpy(np_edge_id).long().to(device)
+
+    assoc[torch_n_id] = torch.arange(torch_n_id.size(0), device=device)
+    torch_edge_index[0] = assoc[torch_edge_index[0]]
+    torch_edge_index[1] = assoc[torch_edge_index[1]]
+
+    neighbor_info = (torch_n_id, torch_edge_index, torch_e_id)
     return neighbor_info
 
 # ==========
@@ -268,8 +316,6 @@ PER_VAL_EPOCH = args.per_val_epoch
 device = args.device
 CN_TIME_DECAY = False
 
-K_PATCH = args.patch_num
-
 MODEL_NAME = 'TNCN'
 # ==========
 
@@ -287,17 +333,25 @@ val_data = data[val_mask]
 test_data = data[test_mask]
 observed_nodes = torch.cat([train_data.src, train_data.dst]).unique()
 transductive_mask = {
-    "val": (torch.isin(val_data.src, observed_nodes) & torch.isin(val_data.dst, observed_nodes)).cpu().numpy(),
-    "test": (torch.isin(test_data.src, observed_nodes) & torch.isin(test_data.dst, observed_nodes)).cpu().numpy(),
+    "val": torch.isin(val_data.src, observed_nodes).cpu().numpy(),
+    "test": torch.isin(test_data.src, observed_nodes).cpu().numpy(),
 }
 inductive_mask = {
-    "val": ~ (torch.isin(val_data.src, observed_nodes) & torch.isin(val_data.dst, observed_nodes)).cpu().numpy(),
-    "test": ~ (torch.isin(test_data.src, observed_nodes) & torch.isin(test_data.dst, observed_nodes)).cpu().numpy(),
+    "val": ~ transductive_mask["val"],
+    "test": ~ transductive_mask["test"],
 }
 
 train_loader = TemporalDataLoader(train_data, batch_size=BATCH_SIZE)
+# if DATA == "tgbl-wiki":
+#     val_loader = TemporalDataLoader(val_data, batch_size=1)
+#     test_loader = TemporalDataLoader(test_data, batch_size=1)
+# else:
 val_loader = TemporalDataLoader(val_data, batch_size=BATCH_SIZE)
 test_loader = TemporalDataLoader(test_data, batch_size=BATCH_SIZE)
+
+train_neighbor_sampler = get_neighbor_sampler(train_data, seed=0)
+full_neighbor_sampler = get_neighbor_sampler(data, seed=1)
+train_neg_edge_sampler = NegativeEdgeSampler(train_data.src.detach().cpu().numpy(), train_data.dst.detach().cpu().numpy(), seed=0, device=device)
 
 # Ensure to only sample actual destination nodes as negatives.
 min_dst_idx, max_dst_idx = int(data.dst.min()), int(data.dst.max())
@@ -356,6 +410,7 @@ def get_emb_module(emb_func):
 msg_module = get_msg_func(args.msg_func)
 agg_module = get_agg_module(args.agg_func)
 
+t_enc_grad = False if DATA == "tgbl-review" else True
 # define the model end-to-end
 memory = TGNMemory(
     data.num_nodes,
@@ -364,17 +419,19 @@ memory = TGNMemory(
     TIME_DIM,
     message_module=msg_module,
     aggregator_module=agg_module,
+    t_enc_grad=t_enc_grad,
 ).to(device)
 
 gnn = get_emb_module(args.emb_func)
 
 hidden_channels = 256 # EMB_DIM
-link_pred = NCNPredictor(in_channels=EMB_DIM, hidden_channels=hidden_channels,
+link_pred = NCNPredWOW(in_channels=EMB_DIM, hidden_channels=hidden_channels,
                          out_channels=1, NCN_mode=NCN_MODE).to(device)
 
 model = {'memory': memory,
          'gnn': gnn,
-         'link_pred': link_pred}
+         'link_pred': link_pred,
+        }
 
 optimizer = torch.optim.Adam(
     set(model['memory'].parameters()) | set(model['gnn'].parameters()) | set(model['link_pred'].parameters()),
@@ -384,7 +441,6 @@ criterion = torch.nn.BCEWithLogitsLoss()
 
 # Helper vector to map global node indices to local ones.
 assoc = torch.empty(data.num_nodes, dtype=torch.long, device=device)
-upd_time_table = torch.zeros(data.num_nodes, dtype=torch.long, device=device)
 
 print("==========================================================")
 print(f"=================*** {MODEL_NAME}: LinkPropPred: {DATA} ***=============")
@@ -399,7 +455,7 @@ if not osp.exists(results_path):
     os.mkdir(results_path)
     print('INFO: Create directory {}'.format(results_path))
 Path(results_path).mkdir(parents=True, exist_ok=True)
-results_filename = f'{results_path}/{MODEL_NAME}_{DATA}_{NCN_MODE}_{args.msg_func}_{args.emb_func}_{args.agg_func}_{args.nei_sampler}_{args.patch_num}_results.json'
+results_filename = f'{results_path}/{MODEL_NAME}_{DATA}_{NCN_MODE}_results.json'
 
 for run_idx in range(NUM_RUNS):
     print('-------------------------------------------------------------------------------')
@@ -412,7 +468,7 @@ for run_idx in range(NUM_RUNS):
 
     # define an early stopper
     save_model_dir = f'{osp.dirname(osp.abspath(__file__))}/saved_models/'
-    save_model_id = f'{MODEL_NAME}_{DATA}_{SEED}_{run_idx}_NCN_{NCN_MODE}_{args.msg_func}_{args.emb_func}_{args.agg_func}_{args.nei_sampler}_{args.patch_num}'
+    save_model_id = f'{MODEL_NAME}_{DATA}_{SEED}_{run_idx}_NCN_{NCN_MODE}_dim_{EMB_DIM}_nei_{NUM_NEIGHBORS}_lr_{LR}'
     early_stopper = EarlyStopMonitor(save_model_dir=save_model_dir, save_model_id=save_model_id, 
                                     tolerance=TOLERANCE, patience=PATIENCE)
 
@@ -421,8 +477,6 @@ for run_idx in range(NUM_RUNS):
     dataset.load_val_ns()
 
     val_perf_list = []
-    trans_val_list = []
-    ind_val_list = []
     start_train_val = timeit.default_timer()
     for epoch in range(1, NUM_EPOCH + 1):
         # training
@@ -439,11 +493,10 @@ for run_idx in range(NUM_RUNS):
             print(f"\tValidation {metric}: {perf_metric_val: .4f}, Transductive {metric}: {trans_val: .4f}, Inductive {metric}: {ind_val: .4f}")
             print(f"\tValidation: Elapsed time (s): {timeit.default_timer() - start_val: .4f}")
             val_perf_list.append(perf_metric_val)
-            trans_val_list.append(trans_val)
-            ind_val_list.append(ind_val)
 
             # check for early stopping
             if early_stopper.step_check(perf_metric_val, model):
+                # neighbor_loader._save()
                 break
 
     train_val_time = timeit.default_timer() - start_train_val
@@ -470,17 +523,14 @@ for run_idx in range(NUM_RUNS):
                   'run': run_idx,
                   'seed': SEED,
                   'NCN_mode': NCN_MODE,
-                  'msg_func': args.msg_func,
-                  'emb_func': args.emb_func,
-                  'agg_func': args.agg_func,
-                  'nei_sampler': args.nei_sampler,
-                  'patch_num': args.patch_num,
+                  'emb_dim': EMB_DIM,
+                  'type': "w/ GAE + previous NCN",
+                #   'lr': LR,
+                #   'ORD': "ord",
+                #   'ORD_layers': ord_func.conv.num_layers,
+                  'num_neighbors': NUM_NEIGHBORS,
                   f'val {metric}': val_perf_list,
-                  f'trans_val {metric}': trans_val_list,
-                  f'ind_val {metric}': ind_val_list,
                   f'test {metric}': perf_metric_test,
-                  f'trans_test {metric}': trans_test,
-                  f'ind_test {metric}': ind_test,
                   'test_time': test_time,
                   'tot_train_val_time': train_val_time
                   }, 

@@ -5,6 +5,7 @@ import os
 import os.path as osp
 from pathlib import Path
 import numpy as np
+from tqdm import tqdm
 
 import torch
 from sklearn.metrics import average_precision_score, roc_auc_score
@@ -50,7 +51,7 @@ def train():
     neighbor_loader.reset_state()  # Start with an empty graph.
 
     total_loss = 0
-    for batch in train_loader:
+    for batch in tqdm(train_loader):
         batch = batch.to(device)
         optimizer.zero_grad()
 
@@ -68,7 +69,7 @@ def train():
         z, last_update = model['memory'](n_id)
         raw_n_feat = node_features[n_id]
         z = (z + raw_n_feat)
-        z = model['gnn'](
+        z1 = model['gnn'](
             z,
             last_update,
             edge_index,
@@ -76,6 +77,8 @@ def train():
             data.msg[e_id].to(device),
         )
         
+        z2 = ord_func(z, edge_index, data.msg[e_id].to(device))
+        z = z1 + z2
 
         pos_out = model['link_pred'](z[assoc[src]], z[assoc[pos_dst]])
         neg_out = model['link_pred'](z[assoc[src]], z[assoc[neg_dst]])
@@ -114,7 +117,7 @@ def test(loader, neg_sampler: RandEdgeSampler, split_mode):
 
     perf_list = {"acc": [], "ap": [], "auc": []}
 
-    for pos_batch in loader:
+    for pos_batch in tqdm(loader):
         pos_src, pos_dst, pos_t, pos_msg = (
             pos_batch.src,
             pos_batch.dst,
@@ -133,13 +136,16 @@ def test(loader, neg_sampler: RandEdgeSampler, split_mode):
         z, last_update = model['memory'](n_id)
         raw_n_feat = node_features[n_id]
         z = (z + raw_n_feat) 
-        z = model['gnn'](
+        z1 = model['gnn'](
             z,
             last_update,
             edge_index,
             data.t[e_id].to(device),
             data.msg[e_id].to(device),
         )
+
+        z2 = ord_func(z, edge_index, data.msg[e_id].to(device))
+        z = z1 + z2
         
         src_re = assoc[pos_src]
         nsrc_re = assoc[neg_src]
@@ -268,12 +274,22 @@ gnn = GraphAttentionEmbedding(
 # link_pred = LinkPredictor(in_channels=EMB_DIM).to(device)
 link_pred = MergeLayer(EMB_DIM, EMB_DIM, EMB_DIM, 1).to(device)
 
+edge_attr_dim = data.msg.size(-1) #+ memory.time_enc.out_channels
+from modules.emb_module import ORDEmbedding
+ord_func = ORDEmbedding(in_channels=MEM_DIM, 
+                        hidden_channels=EMB_DIM*2, 
+                        out_channels=EMB_DIM,
+                        edge_attr_dim=edge_attr_dim,
+                        edge_enc_dim=edge_attr_dim * 2,
+                        num_layers=3).to(device)
+
 model = {'memory': memory,
          'gnn': gnn,
          'link_pred': link_pred}
 
 optimizer = torch.optim.Adam(
-    set(model['memory'].parameters()) | set(model['gnn'].parameters()) | set(model['link_pred'].parameters()),
+    set(model['memory'].parameters()) | set(model['gnn'].parameters()) | set(model['link_pred'].parameters())
+    | set(ord_func.parameters()),
     lr=LR,
 )
 criterion = torch.nn.BCEWithLogitsLoss()

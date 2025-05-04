@@ -53,6 +53,7 @@ def train():
     model['link_pred'].train()
 
     model['memory'].reset_state()  # Start with a fresh memory.
+    model["memory"].set_memory(node_features)
     neighbor_loader.reset_state()  # Start with an empty graph.
 
     total_loss = 0
@@ -74,8 +75,8 @@ def train():
 
         loss = 0.0
 
-        patch_size = math.ceil(bsrc.size(0) / K_PATCH)
-        for k in range(K_PATCH):
+        patch_size = math.ceil(bsrc.size(0) / K_PATCH_TRAIN)
+        for k in range(K_PATCH_TRAIN):
             start_idx = k * patch_size
             end_idx = min((k + 1) * patch_size, bsrc.size(0))
             exact_patch_size = end_idx - start_idx
@@ -100,7 +101,7 @@ def train():
             # Get updated memory of all nodes involved in the computation.
             z, last_update = model['memory'](n_id)
             raw_n_feat = node_features[n_id]
-            z = z + raw_n_feat
+            z = z #+ raw_n_feat
 
             z = model['gnn'](
                 z,
@@ -203,7 +204,7 @@ def test(loader, neg_sampler: RandEdgeSampler, split_mode):
             # Get updated memory of all nodes involved in the computation.
             z, last_update = model['memory'](n_id)
             raw_n_feat = node_features[n_id]
-            z = z + raw_n_feat
+            z = z #+ raw_n_feat
             z = model['gnn'](
                 z,
                 last_update,
@@ -298,6 +299,7 @@ PER_VAL_EPOCH = args.per_val_epoch
 CN_TIME_DECAY = False
 
 K_PATCH = args.patch_num
+K_PATCH_TRAIN = 1
 inductive = True
 
 MODEL_NAME = 'TNCN'
@@ -377,7 +379,7 @@ if not osp.exists(results_path):
     os.mkdir(results_path)
     print('INFO: Create directory {}'.format(results_path))
 Path(results_path).mkdir(parents=True, exist_ok=True)
-results_filename = f'{results_path}/{MODEL_NAME}_{DATA}_{NCN_MODE}_results.json'
+results_filename = f'{results_path}/{MODEL_NAME}_{DATA}_NCN_{NCN_MODE}_ns_{K_PATCH}_nei_{NUM_NEIGHBORS}_results.json'
 
 for run_idx in range(NUM_RUNS):
     print('-------------------------------------------------------------------------------')
@@ -390,7 +392,7 @@ for run_idx in range(NUM_RUNS):
 
     # define an early stopper
     save_model_dir = f'{osp.dirname(osp.abspath(__file__))}/saved_models/'
-    save_model_id = f'{MODEL_NAME}_{DATA}_{SEED}_{run_idx}_NCN_{NCN_MODE}'
+    save_model_id = f'{MODEL_NAME}_{DATA}_{SEED}_{run_idx}_NCN_{NCN_MODE}_ns_{K_PATCH}_nei_{NUM_NEIGHBORS}'
     early_stopper = EarlyStopMonitor(save_model_dir=save_model_dir, save_model_id=save_model_id, 
                                     tolerance=TOLERANCE, patience=PATIENCE)
 

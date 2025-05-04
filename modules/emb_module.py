@@ -7,6 +7,59 @@ import math
 from torch_geometric.nn import TransformerConv
 import torch
 
+import torch.nn as nn
+from torch_geometric.nn import GINEConv, GINConv
+from modules.time_enc import TimeEncoder
+
+class GINEforEdge(torch.nn.Module):
+    def __init__(self, in_channels, hid_channels, out_channels, edge_dim, num_layers=2):
+        super().__init__()
+        self.num_layers = num_layers
+        self.convs = nn.ModuleList()
+        self.lin_input = nn.Linear(in_channels, hid_channels)
+        for _ in range(num_layers):
+            nn_for_GINE = nn.Sequential(
+                nn.Linear(hid_channels, hid_channels),
+                nn.ReLU(),
+                nn.Linear(hid_channels, hid_channels),
+                nn.ReLU(),
+            )
+            self.convs.append(
+                GINEConv(nn_for_GINE, train_eps=False, edge_dim=edge_dim)
+            )
+        
+        # self.dropout = nn.Dropout(0.1)
+        self.norm_layer = nn.LayerNorm(hid_channels)
+        self.lin_output = nn.Linear(hid_channels, out_channels)
+
+    def forward(self, x, edge_index, edge_attr):
+        x = self.lin_input(x)
+        for conv in self.convs:
+            x = conv(x, edge_index, edge_attr)
+            # x = self.dropout(x)
+
+        x = self.norm_layer(x)
+        x = self.lin_output(x)
+        return x
+
+class AttrEmbedding(torch.nn.Module):
+    def __init__(self, in_channels, hidden_channels, out_channels, edge_attr_dim, edge_enc_dim, num_layers=2):
+        super().__init__()
+        self.mlp = torch.nn.Sequential(
+            torch.nn.Linear(edge_attr_dim, edge_attr_dim),
+            torch.nn.ReLU(),
+            # torch.nn.Linear(edge_attr_dim, edge_attr_dim),
+            # torch.nn.ReLU(),
+            torch.nn.Linear(edge_attr_dim, 1),
+        )
+        self.cos_sin_attr = TimeEncoder(out_channels=edge_enc_dim, requires_grad=False)
+        self.conv = GINEforEdge(in_channels, hidden_channels, out_channels, edge_enc_dim, num_layers)
+
+    def forward(self, x, edge_index, edge_attr):
+        edge_ord = self.mlp(edge_attr)
+        edge_ord = self.cos_sin_attr(edge_ord)
+        return self.conv(x, edge_index, edge_ord)
+
 
 class GraphAttentionEmbedding(torch.nn.Module):
     """

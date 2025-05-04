@@ -111,6 +111,11 @@ class TGNMemory(torch.nn.Module):
         zeros(self.last_update)
         self._reset_message_store()
 
+    def set_memory(self, memory: Tensor):
+        """Sets the memory in place."""
+        assert self.memory.size() == memory.size()
+        self.memory.copy_(memory)
+
     def detach(self):
         """Detaches the memory from gradient computation."""
         self.memory.detach_()

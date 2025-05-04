@@ -49,9 +49,9 @@ def get_args():
     parser.add_argument('--k_value', type=int, help='k_value for computing ranking metrics', default=10)
     parser.add_argument('--num_epoch', type=int, help='Number of epochs', default=50)
     parser.add_argument('--seed', type=int, help='Random seed', default=1)
-    parser.add_argument('--mem_dim', type=int, help='Memory dimension', default=100)
+    parser.add_argument('--mem_dim', type=int, help='Memory dimension', default=172)
     parser.add_argument('--time_dim', type=int, help='Time dimension', default=100)
-    parser.add_argument('--emb_dim', type=int, help='Embedding dimension', default=100)
+    parser.add_argument('--emb_dim', type=int, help='Embedding dimension', default=172)
     parser.add_argument('--tolerance', type=float, help='Early stopper tolerance', default=1e-6)
     parser.add_argument('--patience', type=float, help='Early stopper patience', default=0)
     parser.add_argument('--num_run', type=int, help='Number of iteration runs', default=1)
@@ -67,6 +67,7 @@ def get_args():
     parser.add_argument('--upd_func', type=str, help='update function', default='gru', choices=['gru', 'rnn'])
     parser.add_argument('--emb_func', type=str, help='embedding function', default='GraphAttention')
     parser.add_argument('--agg_func', type=str, help='aggregator', default='last')
+    parser.add_argument('--edge_attr', type=str, help='edge_attr', default='attr', choices=['gine', 'attr'])
     parser.add_argument('--device', type=str, help='device', default=torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
 
     try:
